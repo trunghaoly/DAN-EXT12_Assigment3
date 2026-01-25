@@ -1,292 +1,338 @@
 import cv2
-import numpy as np
 import tkinter as tk
 from tkinter import filedialog
 import tkinter.messagebox as msg
 from PIL import Image, ImageTk
-from tkinter import filedialog
 import os
 
-original_img = None
-current_img = None
-img_path = ""
+# ===================== MODEL =====================
+class ImageModel:
+    def __init__(self):
+        self.original_img = None
+        self.current_img = None
+        self.img_path = ""
 
-root = tk.Tk()
-root.title("Assigment 3")
-root.geometry("1000x600")
+        self.brightness = 0
+        self.contrast = 1.0
+        self.zoom = 1.0
+        self.blur = 0  # must be odd or 0
 
-brightness = 0
-contrast = 1.0
-undo_stack = []
-redo_stack = []
+        self.undo_stack = []
+        self.redo_stack = []
 
-def show_image(cv_img):
-    rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-    img = Image.fromarray(rgb)
-    frame_w = image_frame.winfo_width()
-    frame_h = image_frame.winfo_height()
-    if frame_w < 10 or frame_h < 10:
-        frame_w, frame_h = 800, 500
+    def snapshot(self):
+        return {
+            "img": self.current_img.copy(),
+            "base": self.original_img.copy(),
+            "brightness": self.brightness,
+            "contrast": self.contrast,
+            "zoom": self.zoom,
+            "blur": self.blur
+        }
 
-    img_w, img_h = img.size
+    def restore(self, s):
+        self.current_img = s["img"]
+        self.original_img = s["base"]
+        self.brightness = s["brightness"]
+        self.contrast = s["contrast"]
+        self.zoom = s["zoom"]
+        self.blur = s["blur"]
 
-    scale = min(frame_w / img_w, frame_h / img_h, 1)
+    def push_undo(self):
+        if self.current_img is not None and self.original_img is not None:
+            self.undo_stack.append(self.snapshot())
+            self.redo_stack.clear()
 
-    new_size = (int(img_w * scale), int(img_h * scale))
-    img = img.resize(new_size, Image.LANCZOS)
-    imgtk = ImageTk.PhotoImage(img)
-    image_label.config(image=imgtk)
-    image_label.image = imgtk
+    def undo(self):
+        if not self.undo_stack:
+            return False
+        self.redo_stack.append(self.snapshot())
+        self.restore(self.undo_stack.pop())
+        return True
 
-def update_status():
-    global current_img, img_path
+    def redo(self):
+        if not self.redo_stack:
+            return False
+        self.undo_stack.append(self.snapshot())
+        self.restore(self.redo_stack.pop())
+        return True
 
-    if current_img is None:
-        status_bar.config(text="No image loaded")
-    else:
-        h, w = current_img.shape[:2]
+    def open_image(self, path):
+        self.img_path = path
+        self.original_img = cv2.imread(path)
+        self.current_img = self.original_img.copy()
 
-        if img_path:
-            filename = os.path.basename(img_path)
+        self.brightness = 0
+        self.contrast = 1.0
+        self.zoom = 1.0
+        self.blur = 0
+
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+
+    def apply_all(self):
+        if self.original_img is None:
+            return
+
+        img = self.original_img.copy()
+
+        if self.blur > 0:
+            k = self.blur if self.blur % 2 == 1 else self.blur + 1
+            img = cv2.GaussianBlur(img, (k, k), 0)
+
+        img = cv2.convertScaleAbs(
+            img,
+            alpha=float(self.contrast),
+            beta=int(self.brightness)
+        )
+        self.current_img = img
+
+    # ---------- effects ----------
+    def grayscale(self):
+        self.push_undo()
+        g = cv2.cvtColor(self.current_img, cv2.COLOR_BGR2GRAY)
+        self.current_img = cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
+        self.original_img = self.current_img.copy()
+
+    def edge(self):
+        self.push_undo()
+        e = cv2.Canny(self.current_img, 100, 200)
+        self.current_img = cv2.cvtColor(e, cv2.COLOR_GRAY2BGR)
+        self.original_img = self.current_img.copy()
+
+    def rotate(self, angle):
+        self.push_undo()
+        if angle == 90:
+            self.current_img = cv2.rotate(self.current_img, cv2.ROTATE_90_CLOCKWISE)
+        elif angle == 180:
+            self.current_img = cv2.rotate(self.current_img, cv2.ROTATE_180)
+        elif angle == 270:
+            self.current_img = cv2.rotate(self.current_img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        self.original_img = self.current_img.copy()
+
+    def flip_h(self):
+        self.push_undo()
+        self.current_img = cv2.flip(self.current_img, 1)
+        self.original_img = self.current_img.copy()
+
+    def flip_v(self):
+        self.push_undo()
+        self.current_img = cv2.flip(self.current_img, 0)
+        self.original_img = self.current_img.copy()
+
+
+# ===================== VIEW =====================
+class ImageView:
+    def __init__(self, root):
+        self.canvas_img = None
+
+        self.canvas = tk.Canvas(root, bg="#444", highlightthickness=0)
+        self.canvas.pack(side=tk.TOP, expand=True, fill="both")
+
+        self.status = tk.Label(
+            root, text="No image loaded",
+            bd=1, relief=tk.SUNKEN, anchor=tk.W
+        )
+        self.status.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def show(self, img, zoom):
+        if img is None:
+            return
+
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        pil = Image.fromarray(rgb)
+
+        w, h = pil.size
+        pil = pil.resize((int(w * zoom), int(h * zoom)), Image.LANCZOS)
+
+        self.canvas_img = ImageTk.PhotoImage(pil)
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, anchor="nw", image=self.canvas_img)
+        self.canvas.config(scrollregion=self.canvas.bbox("all"))
+
+    def update_status(self, model):
+        if model.current_img is None:
+            self.status.config(text="No image loaded")
         else:
-            filename = "Untitled"
-
-        status_bar.config(text=f"{filename} | {w} × {h}")
-
-def open():
-    global original_img, current_img, img_path
-    img_path = filedialog.askopenfilename(
-    filetypes=[("Image files", "*.jpg *.png *.jpeg *.bmp")]
-)
-    if img_path:
-        original_img = cv2.imread(img_path)
-        current_img = original_img.copy()
-        show_image(current_img)
-        update_status()
-
-def save():
-    global current_img, img_path
-    if current_img is None:
-        msg.showwarning("Warning", "No image to save")
-        return
-
-    if img_path == "":
-        save_as()
-    else:
-        cv2.imwrite(img_path, current_img)
-        msg.showinfo("Saved", "Image saved successfully")
-
-def save_as():
-    global current_img
-    if current_img is None:
-        msg.showwarning("Warning", "No image to save")
-        return
-    path = filedialog.asksaveasfilename(
-        defaultextension=".jpg",
-        filetypes=[
-            ("JPEG", "*.jpg"),
-            ("PNG", "*.png"),
-            ("BMP", "*.bmp")
-        ]
-    )
-
-    if path:
-        cv2.imwrite(path, current_img)
-        msg.showinfo("Saved", f"Image saved to:\n{path}")
-
-def push_undo():
-    global undo_stack, redo_stack, current_img
-    if current_img is not None:
-        undo_stack.append(current_img.copy())
-        redo_stack.clear()
-
-def undo():
-    global current_img, undo_stack, redo_stack
-    if undo_stack:
-        redo_stack.append(current_img.copy())
-        current_img = undo_stack.pop()
-        show_image(current_img)
-        update_status()
-    else:
-        msg.showinfo("Undo", "Nothing to undo")
-
-def redo():
-    global current_img, undo_stack, redo_stack
-    if redo_stack:
-        undo_stack.append(current_img.copy())
-        current_img = redo_stack.pop()
-        show_image(current_img)
-        update_status()
-    else:
-        msg.showinfo("Redo", "Nothing to redo")
+            h, w = model.current_img.shape[:2]
+            name = os.path.basename(model.img_path)
+            self.status.config(text=f"{name} | {w} × {h}")
 
 
-def grayscale():
-    global current_img
-    if current_img is not None:
-        push_undo()
-        gray = cv2.cvtColor(current_img, cv2.COLOR_BGR2GRAY)
-        current_img = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        show_image(current_img)
-        update_status()
+# ===================== CONTROLLER =====================
+class ImageEditorApp:
+    def __init__(self, root):
+        self.root = root
+        self.model = ImageModel()
 
-def blur():
-    global current_img
-    if current_img is not None:
-        push_undo()
-        current_img = cv2.GaussianBlur(current_img, (9, 9), 0)
-        show_image(current_img)
-        update_status()
+        self.build_menu()
+        self.build_toolbar()
+        self.view = ImageView(root)
 
-def edge():
-    global current_img
-    if current_img is not None:
-        push_undo()
-        current_img = cv2.Canny(current_img, 100, 200)
-        show_image(current_img)
-        update_status()
+    # ---------- MENU ----------
+    def build_menu(self):
+        menu = tk.Menu(self.root)
+        self.root.config(menu=menu)
 
-def bright_up():
-    global current_img, brightness, contrast, original_img
-    if current_img is not None: 
-        push_undo()
-        brightness += 10
-        current_img = cv2.convertScaleAbs(original_img, alpha=contrast, beta=brightness)
-        show_image(current_img)
-        update_status()
+        file = tk.Menu(menu, tearoff=0)
+        menu.add_cascade(label="File", menu=file)
+        file.add_command(label="Open", command=self.open_image)
+        file.add_command(label="Save", command=self.save)
+        file.add_command(label="Save As", command=self.save_as)
+        file.add_separator()
+        file.add_command(label="Exit", command=self.root.quit)
 
-def bright_down():
-    global current_img, brightness, contrast, original_img
-    if current_img is not None:
-        push_undo() 
-        brightness -= 10
-        current_img = cv2.convertScaleAbs(original_img, alpha=contrast, beta=brightness)
-        show_image(current_img)
-        update_status()
+        edit = tk.Menu(menu, tearoff=0)
+        menu.add_cascade(label="Edit", menu=edit)
+        edit.add_command(label="Undo", command=self.undo)
+        edit.add_command(label="Redo", command=self.redo)
 
-def bright():
-    global current_img, brightness, contrast, original_img
-    if current_img is not None:
-        push_undo() 
-        brightness = 10
-        current_img = cv2.convertScaleAbs(original_img, alpha=contrast, beta=brightness)
-        show_image(current_img)
-        update_status()
+    # ---------- TOOLBAR ----------
+    def build_toolbar(self):
+        bar = tk.Frame(self.root, bd=1, relief=tk.RAISED)
+        bar.pack(side=tk.TOP, fill=tk.X)
 
-def cons_up():
-    global current_img, brightness, contrast, original_img
-    if current_img is not None:
-        push_undo() 
-        contrast += 0.1
-        current_img = cv2.convertScaleAbs(original_img, alpha=contrast, beta=brightness)
-        show_image(current_img)
-        update_status()
+        effects = tk.LabelFrame(bar, text="Effects")
+        effects.pack(side=tk.LEFT, padx=6, pady=4)
 
-def cons_down():
-    global current_img, brightness, contrast, original_img
-    if current_img is not None:
-        push_undo() 
-        contrast -= 0.1
-        current_img = cv2.convertScaleAbs(original_img, alpha=contrast, beta=brightness)
-        show_image(current_img)
-        update_status()
+        tk.Button(effects, text="Grayscale", command=self.grayscale).pack(side=tk.LEFT, padx=3)
+        tk.Button(effects, text="Edge", command=self.edge).pack(side=tk.LEFT, padx=3)
 
-def cons():
-    global current_img, brightness, contrast, original_img
-    if current_img is not None:
-        push_undo() 
-        contrast = 1.0
-        current_img = cv2.convertScaleAbs(original_img, alpha=contrast, beta=brightness)
-        show_image(current_img)
-        update_status()
+        adjust = tk.LabelFrame(bar, text="Adjustments")
+        adjust.pack(side=tk.LEFT, padx=6, pady=4)
 
-def rotation():
-    global current_img
-    if current_img is not None:
-        push_undo() 
-        current_img = cv2.rotate(current_img, cv2.ROTATE_90_CLOCKWISE)
-        show_image(current_img)
-        update_status()
+        self.brightness = tk.Scale(
+            adjust, from_=-100, to=100,
+            orient=tk.HORIZONTAL, label="Brightness",
+            length=140, command=self.on_brightness
+        )
+        self.brightness.pack(side=tk.LEFT, padx=4)
 
-def flip():
-    global current_img
-    if current_img is not None:
-        push_undo()
-        current_img = cv2.flip(current_img, 1)
-        show_image(current_img)
-        update_status()
+        self.contrast = tk.Scale(
+            adjust, from_=0.5, to=2.0,
+            resolution=0.05, orient=tk.HORIZONTAL,
+            label="Contrast", length=140,
+            command=self.on_contrast
+        )
+        self.contrast.set(1.0)
+        self.contrast.pack(side=tk.LEFT, padx=4)
 
-def resize():
-    global current_img
-    if current_img is not None:
-        push_undo()
-        current_img = cv2.resize(current_img, None, fx=0.5, fy=0.5)
-        show_image(current_img)
-        update_status()
+        self.blur = tk.Scale(
+            adjust, from_=0, to=25,
+            orient=tk.HORIZONTAL, label="Blur",
+            length=140, command=self.on_blur
+        )
+        self.blur.pack(side=tk.LEFT, padx=4)
 
-menu_bar = tk.Menu(root)
-root.config(menu=menu_bar)
+        self.zoom = tk.Scale(
+            adjust, from_=0.2, to=3.0,
+            resolution=0.05, orient=tk.HORIZONTAL,
+            label="Zoom", length=140,
+            command=self.on_zoom
+        )
+        self.zoom.set(1.0)
+        self.zoom.pack(side=tk.LEFT, padx=4)
 
-file_menu = tk.Menu(menu_bar,tearoff=0)
-menu_bar.add_cascade(label="File",menu=file_menu)
-file_menu.add_command(label="Open",command=open)
-file_menu.add_command(label="Save",command=save)
-file_menu.add_command(label="Save As",command=save_as)
-file_menu.add_separator()
-file_menu.add_command(label="Exit",command=root.quit)
+        transform = tk.LabelFrame(bar, text="Transform")
+        transform.pack(side=tk.LEFT, padx=6, pady=4)
 
-edit_menu = tk.Menu(menu_bar,tearoff=0)
-menu_bar.add_cascade(label="Edit",menu=edit_menu)
-edit_menu.add_command(label="Undo",command=undo)
-edit_menu.add_command(label="Redo",command=redo)
+        tk.Button(transform, text="90°", command=lambda: self.rotate(90)).pack(side=tk.LEFT, padx=3)
+        tk.Button(transform, text="180°", command=lambda: self.rotate(180)).pack(side=tk.LEFT, padx=3)
+        tk.Button(transform, text="270°", command=lambda: self.rotate(270)).pack(side=tk.LEFT, padx=3)
+        tk.Button(transform, text="Flip H", command=self.flip_h).pack(side=tk.LEFT, padx=3)
+        tk.Button(transform, text="Flip V", command=self.flip_v).pack(side=tk.LEFT, padx=3)
+
+    # ---------- CORE ----------
+    def refresh(self):
+        self.view.show(self.model.current_img, self.model.zoom)
+        self.view.update_status(self.model)
+
+    def open_image(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("Image files", "*.jpg *.png *.jpeg *.bmp")]
+        )
+        if path:
+            self.model.open_image(path)
+            self.brightness.set(0)
+            self.contrast.set(1.0)
+            self.zoom.set(1.0)
+            self.blur.set(0)
+            self.refresh()
+
+    def save(self):
+        if self.model.current_img is not None:
+            cv2.imwrite(self.model.img_path, self.model.current_img)
+
+    def save_as(self):
+        if self.model.current_img is None:
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".jpg")
+        if path:
+            cv2.imwrite(path, self.model.current_img)
+            self.model.img_path = path
+
+    def undo(self):
+        self.model.undo()
+        self.sync()
+        self.refresh()
+
+    def redo(self):
+        self.model.redo()
+        self.sync()
+        self.refresh()
+
+    def sync(self):
+        self.brightness.set(self.model.brightness)
+        self.contrast.set(self.model.contrast)
+        self.zoom.set(self.model.zoom)
+        self.blur.set(self.model.blur)
+
+    # ---------- ACTIONS ----------
+    def grayscale(self):
+        self.model.grayscale()
+        self.refresh()
+
+    def edge(self):
+        self.model.edge()
+        self.refresh()
+
+    def rotate(self, a):
+        self.model.rotate(a)
+        self.refresh()
+
+    def flip_h(self):
+        self.model.flip_h()
+        self.refresh()
+
+    def flip_v(self):
+        self.model.flip_v()
+        self.refresh()
+
+    def on_brightness(self, v):
+        self.model.brightness = int(float(v))
+        self.model.apply_all()
+        self.refresh()
+
+    def on_contrast(self, v):
+        self.model.contrast = float(v)
+        self.model.apply_all()
+        self.refresh()
+
+    def on_blur(self, v):
+        self.model.push_undo()
+        self.model.blur = int(v)
+        self.model.apply_all()
+        self.refresh()
+
+    def on_zoom(self, v):
+        self.model.zoom = float(v)
+        self.refresh()
 
 
-toolbar = tk.Frame(root, bd=1, relief=tk.RAISED)
-
-but_grayscale = tk.Button(toolbar,text="Grayscale Conversion",command=grayscale).pack(side=tk.LEFT,padx=2,pady=2)
-
-but_blur = tk.Button(toolbar,text="Blur Effect",command=blur).pack(side=tk.LEFT,padx=2,pady=2)
-
-but_edge = tk.Button(toolbar,text="Edge Detection",command=edge).pack(side=tk.LEFT,padx=2,pady=2)
-
-but_brightness = tk.Button(toolbar,text="Brightness",command=bright).pack(side=tk.LEFT,padx=2,pady=2)
-
-but_brightness = tk.Button(toolbar,text="+",command=bright_up).pack(side=tk.LEFT,padx=2,pady=2)
-
-but_brightness = tk.Button(toolbar,text="-",command=bright_down).pack(side=tk.LEFT,padx=2,pady=2)
-
-but_contrast = tk.Button(toolbar,text="Contrast",command=cons).pack(side=tk.LEFT,padx=2,pady=2)
-
-but_contrast = tk.Button(toolbar,text="+",command=cons_up).pack(side=tk.LEFT,padx=2,pady=2)
-
-but_contrast = tk.Button(toolbar,text="-",command=cons_down).pack(side=tk.LEFT,padx=2,pady=2)
-
-but_rotation = tk.Button(toolbar,text="Image Rotationn",command=rotation).pack(side=tk.LEFT,padx=2,pady=2)
-
-but_flip = tk.Button(toolbar,text="Image Flip",command=flip).pack(side=tk.LEFT,padx=2,pady=2)
-
-but_resize = tk.Button(toolbar,text="Resize/Scale",command=resize).pack(side=tk.LEFT,padx=2,pady=2)
-
-toolbar.pack(side=tk.TOP, fill=tk.X)
-
-image_frame = tk.Frame(root, bg="#444")
-image_frame.pack(side="top", expand=True, fill="both")
-image_label = tk.Label(
-    image_frame,
-    text="No image loaded",
-    fg="white",
-    bg="#444",
-    font=("Arial", 14)
-)
-image_label.pack(expand=True)
-
-status_bar = tk.Label(
-    root,
-    text="No image loaded",
-    bd=1,
-    relief=tk.SUNKEN,
-    anchor=tk.W
-)
-status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
-root.mainloop()
+# ===================== RUN =====================
+if __name__ == "__main__":
+    root = tk.Tk()
+    root.title("Assignment 3")
+    root.geometry("1100x650")
+    ImageEditorApp(root)
+    root.mainloop()
