@@ -1,10 +1,13 @@
-import cv2
+import customtkinter as ctk
 import tkinter as tk
-from tkinter import filedialog
-import tkinter.messagebox as msg
-from PIL import Image, ImageTk
+from tkinter import filedialog, messagebox
+import cv2
 import os
+from PIL import Image, ImageTk, ImageDraw
 
+# ==========================================
+# 1. MODEL (LOGIC XỬ LÝ ẢNH - GIỮ NGUYÊN)
+# ==========================================
 class ImageModel:
     def __init__(self):
         self.original_img = None
@@ -67,16 +70,21 @@ class ImageModel:
         if self.original_img is None: return
         img = self.original_img.copy()
 
+        # Resize (chỉ để hiển thị/save final)
         if self.scale != 1.0:
             img = cv2.resize(img, None, fx=self.scale, fy=self.scale, interpolation=cv2.INTER_LINEAR)
 
+        # Blur
         if self.blur > 0:
-            k = self.blur if self.blur % 2 == 1 else self.blur + 1
+            k = int(self.blur)
+            k = k if k % 2 == 1 else k + 1
             img = cv2.GaussianBlur(img, (k, k), 0)
 
+        # Brightness & Contrast
         img = cv2.convertScaleAbs(img, alpha=self.contrast, beta=self.brightness)
         self.current_img = img
 
+    # --- Destructive Actions ---
     def grayscale(self):
         self.push_undo()
         g = cv2.cvtColor(self.original_img, cv2.COLOR_BGR2GRAY)
@@ -107,173 +115,208 @@ class ImageModel:
         self.apply_all()
 
 
-class ImageView:
-    def __init__(self, root):
-        self.canvas_img = None
-        self.canvas_frame = tk.Frame(root, bg="#333")
-        self.canvas_frame.pack(side=tk.TOP, expand=True, fill="both")
+# ==========================================
+# 2. VIEW & CONTROLLER (SCROLLABLE CANVAS)
+# ==========================================
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("blue")
 
-        self.canvas = tk.Canvas(self.canvas_frame, bg="#333", highlightthickness=0)
-        self.canvas.pack(side=tk.TOP, expand=True, fill="both")
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
 
-        self.status = tk.Label(root, text="No image loaded", bd=1, relief=tk.SUNKEN, anchor=tk.W, bg="#ccc")
-        self.status.pack(side=tk.BOTTOM, fill=tk.X)
-
-    def show(self, img):
-        if img is None:
-            self.canvas.delete("all")
-            return
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        pil = Image.fromarray(rgb)
-        self.canvas_img = ImageTk.PhotoImage(pil)
+        # Cấu hình cửa sổ
+        self.title("Assignment 3 - Scrollable Editor")
+        self.geometry("1100x750")
         
-        self.canvas.delete("all")
-        c_w = self.canvas.winfo_width()
-        c_h = self.canvas.winfo_height()
-        if c_w < 10: c_w = 800 
-        if c_h < 10: c_h = 600
-        
-        self.canvas.create_image(c_w//2, c_h//2, anchor="center", image=self.canvas_img)
-
-    def update_status(self, model):
-        if model.current_img is None:
-            self.status.config(text="No image loaded")
-        else:
-            h, w = model.current_img.shape[:2]
-            name = os.path.basename(model.img_path) if model.img_path else "Untitled"
-            self.status.config(text=f"{name} | {w}x{h} | Zoom: {model.scale:.1f}x")
-
-
-class ImageEditorApp:
-    def __init__(self, root):
-        self.root = root
+        # Model
         self.model = ImageModel()
-        
+        self.current_tk_image = None # Biến giữ tham chiếu ảnh để không bị mất
+
+        # Load Icon 
+        self.menu_icons = {}
+        self.load_menu_icons()
+
+        # 1. MENU BAR
+        self.build_native_menu()
+
+        # 2. VÙNG ẢNH (CANVAS CÓ SCROLLBAR)
+        self.build_scrollable_image_area()
+
+        # 3. CONTROL PANEL
+        self.build_controls()
+
+        # Resize event
+        self.bind("<Configure>", self.on_resize)
+
+    def load_menu_icons(self):
+        """Load icon, resize và ÉP SANG MÀU TRẮNG"""
+        icon_names = ["open", "save", "save_as", "undo", "redo", "close"]
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.icon_dir = os.path.join(base_dir, "icon")
-        self.icons = {} 
+        icon_path = os.path.join(base_dir, "icons") 
 
-        self.preload_icons()
-        self.build_menu()
-        self.build_toolbar()
-        
-        self.view = ImageView(root)
-        self.root.bind("<Configure>", lambda e: self.refresh() if self.model.current_img is not None else None)
-
-    def preload_icons(self):
-        icon_files = {
-            "open": "open.png",
-            "save": "save.png",
-            "save_as": "save_as.png",
-            "close": "close.png",
-            "undo": "undo.png",
-            "redo": "redo.png"
-        }
-        
-        for key, filename in icon_files.items():
-            path = os.path.join(self.icon_dir, filename)
+        for name in icon_names:
+            path = os.path.join(icon_path, f"{name}.png")
             if os.path.exists(path):
-                try:
-                    pil_img = Image.open(path).resize((20, 20), Image.Resampling.LANCZOS)
-                    self.icons[key] = ImageTk.PhotoImage(pil_img)
-                except Exception:
-                    pass
+                img = Image.open(path)
+            else:
+                img = Image.new('RGBA', (20, 20), (0, 0, 0, 0))
+                d = ImageDraw.Draw(img)
+                d.rectangle([2,2,18,18], fill="white")
+            
+            img = img.resize((18, 18), Image.Resampling.LANCZOS)
+            if img.mode != 'RGBA': img = img.convert('RGBA')
+            r, g, b, a = img.split()
+            white_bg = Image.new('RGB', img.size, (255, 255, 255))
+            img = Image.merge('RGBA', (*white_bg.split(), a))
+            self.menu_icons[name] = ImageTk.PhotoImage(img)
 
-    def build_menu(self):
-        menu_conf = {
-            "bg": "#2b2b2b",
-            "fg": "white",
-            "activebackground": "#555",
-            "activeforeground": "white",
-            "tearoff": 0
-        }
+    def build_native_menu(self):
+        menu_theme = {"bg": "#2b2b2b", "fg": "white", "activebackground": "#555", "activeforeground": "white", "tearoff": 0, "bd": 0}
+        menubar = tk.Menu(self) 
+        self.config(menu=menubar)
 
-        menu_bar = tk.Menu(self.root)
-        self.root.config(menu=menu_bar)
-
-        file_menu = tk.Menu(menu_bar, **menu_conf)
-        menu_bar.add_cascade(label="File", menu=file_menu)
-        
-        file_menu.add_command(label=" Open", image=self.icons.get("open"), compound=tk.LEFT, command=self.open_image)
-        file_menu.add_command(label=" Save", image=self.icons.get("save"), compound=tk.LEFT, command=self.save)
-        file_menu.add_command(label=" Save As", image=self.icons.get("save_as"), compound=tk.LEFT, command=self.save_as)
+        file_menu = tk.Menu(menubar, **menu_theme)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label=" Open", image=self.menu_icons["open"], compound="left", command=self.open_image)
+        file_menu.add_command(label=" Save", image=self.menu_icons["save"], compound="left", command=self.save)
+        file_menu.add_command(label=" Save As", image=self.menu_icons["save_as"], compound="left", command=self.save_as)
         file_menu.add_separator()
-        file_menu.add_command(label=" Exit", image=self.icons.get("close"), compound=tk.LEFT, command=self.root.quit)
+        file_menu.add_command(label=" Exit", image=self.menu_icons["close"], compound="left", command=self.quit)
 
-        edit_menu = tk.Menu(menu_bar, **menu_conf)
-        menu_bar.add_cascade(label="Edit", menu=edit_menu)
-        
-        edit_menu.add_command(label=" Undo", image=self.icons.get("undo"), compound=tk.LEFT, command=self.undo)
-        edit_menu.add_command(label=" Redo", image=self.icons.get("redo"), compound=tk.LEFT, command=self.redo)
+        edit_menu = tk.Menu(menubar, **menu_theme)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        edit_menu.add_command(label=" Undo", image=self.menu_icons["undo"], compound="left", command=self.undo)
+        edit_menu.add_command(label=" Redo", image=self.menu_icons["redo"], compound="left", command=self.redo)
 
-    def build_toolbar(self):
-        bar = tk.Frame(self.root, bd=1, relief=tk.RAISED)
-        bar.pack(side=tk.TOP, fill=tk.X)
+    # --- KHU VỰC QUAN TRỌNG: ẢNH CÓ THANH CUỘN ---
+    def build_scrollable_image_area(self):
+        # 1. Tạo Frame chứa (Container)
+        self.img_container = ctk.CTkFrame(self, fg_color="#1a1a1a", corner_radius=0)
+        self.img_container.pack(side="top", fill="both", expand=True)
 
-        effects = tk.LabelFrame(bar, text="Effects")
-        effects.pack(side=tk.LEFT, padx=6)
-        tk.Button(effects, text="Grayscale", command=self.grayscale).pack(side=tk.LEFT, padx=3)
-        tk.Button(effects, text="Edge", command=self.edge).pack(side=tk.LEFT, padx=3)
+        # Dùng Grid layout để đặt Canvas và Scrollbar cạnh nhau
+        self.img_container.grid_rowconfigure(0, weight=1)
+        self.img_container.grid_columnconfigure(0, weight=1)
 
-        adjust = tk.LabelFrame(bar, text="Adjustments")
-        adjust.pack(side=tk.LEFT, padx=6)
+        # 2. Tạo Canvas (Nơi vẽ ảnh)
+        # bg="#1a1a1a" để trùng màu nền tối
+        self.canvas = tk.Canvas(self.img_container, bg="#1a1a1a", highlightthickness=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
 
-        def create_scale(parent, lbl, from_, to_, res, var_setter, release_setter):
-            s = tk.Scale(parent, from_=from_, to=to_, resolution=res, orient=tk.HORIZONTAL, label=lbl, length=120)
-            s.pack(side=tk.LEFT)
-            s.bind("<B1-Motion>", var_setter)
-            s.bind("<ButtonRelease-1>", release_setter)
+        # 3. Tạo Scrollbar Dọc (Vertical)
+        self.v_scroll = ctk.CTkScrollbar(self.img_container, orientation="vertical", command=self.canvas.yview)
+        self.v_scroll.grid(row=0, column=1, sticky="ns")
+
+        # 4. Tạo Scrollbar Ngang (Horizontal)
+        self.h_scroll = ctk.CTkScrollbar(self.img_container, orientation="horizontal", command=self.canvas.xview)
+        self.h_scroll.grid(row=1, column=0, sticky="ew")
+
+        # 5. Kết nối Canvas với Scrollbar
+        self.canvas.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
+
+    def build_controls(self):
+        # Thanh công cụ luôn nằm dưới cùng (side="bottom")
+        control_frame = ctk.CTkFrame(self, fg_color=("#E0E0E0", "#2B2B2B"), height=160, corner_radius=15)
+        control_frame.pack(side="bottom", fill="x", padx=20, pady=20)
+
+        # Cột 1: Effects
+        col1 = ctk.CTkFrame(control_frame, fg_color="transparent")
+        col1.pack(side="left", fill="y", padx=20, pady=20)
+        ctk.CTkLabel(col1, text="EFFECTS", font=("Arial", 12, "bold")).pack(anchor="w", pady=(0,5))
+        ctk.CTkButton(col1, text="Grayscale", width=100, command=self.grayscale).pack(pady=5)
+        ctk.CTkButton(col1, text="Edge Detect", width=100, command=self.edge).pack(pady=5)
+
+        # Cột 2: Sliders
+        col2 = ctk.CTkFrame(control_frame, fg_color="transparent")
+        col2.pack(side="left", fill="x", expand=True, padx=20, pady=10)
+        ctk.CTkLabel(col2, text="ADJUSTMENTS", font=("Arial", 12, "bold")).pack(anchor="w", pady=(0,5))
+
+        def make_slider(parent, txt, f, t, init, cmd_drag, cmd_rel):
+            sub = ctk.CTkFrame(parent, fg_color="transparent")
+            sub.pack(fill="x", pady=2)
+            ctk.CTkLabel(sub, text=txt, width=70, anchor="w").pack(side="left")
+            s = ctk.CTkSlider(sub, from_=f, to=t, height=18)
+            s.set(init)
+            s.pack(side="left", fill="x", expand=True, padx=5)
+            s.configure(command=cmd_drag)
+            s.bind("<ButtonRelease-1>", cmd_rel)
             return s
 
-        self.scale_br = create_scale(adjust, "Brightness", -100, 100, 1, self.on_brightness_change, self.on_release)
-        self.scale_ct = create_scale(adjust, "Contrast", 0.5, 2.0, 0.05, self.on_contrast_change, self.on_release)
-        self.scale_ct.set(1.0)
-        self.scale_bl = create_scale(adjust, "Blur", 0, 25, 1, self.on_blur_change, self.on_release)
-        self.scale_sz = create_scale(adjust, "Resize", 0.2, 3.0, 0.1, self.on_resize_change, self.on_release)
-        self.scale_sz.set(1.0)
+        self.s_br = make_slider(col2, "Bright", -100, 100, 0, self.on_br_change, self.on_release)
+        self.s_ct = make_slider(col2, "Contrast", 0.5, 2.0, 1.0, self.on_ct_change, self.on_release)
+        self.s_bl = make_slider(col2, "Blur", 0, 20, 0, self.on_bl_change, self.on_release)
+        self.s_sz = make_slider(col2, "Resize", 0.1, 3.0, 1.0, self.on_sz_change, self.on_release)
 
-        transform = tk.LabelFrame(bar, text="Transform")
-        transform.pack(side=tk.LEFT, padx=6)
-        tk.Button(transform, text="90°", command=lambda: self.rotate(90)).pack(side=tk.LEFT, padx=2)
-        tk.Button(transform, text="Flip H", command=self.flip_h).pack(side=tk.LEFT, padx=2)
-        tk.Button(transform, text="Flip V", command=self.flip_v).pack(side=tk.LEFT, padx=2)
+        # Cột 3: Transform
+        col3 = ctk.CTkFrame(control_frame, fg_color="transparent")
+        col3.pack(side="right", fill="y", padx=20, pady=20)
+        ctk.CTkLabel(col3, text="TRANSFORM", font=("Arial", 12, "bold")).pack(anchor="w", pady=(0,5))
+        row = ctk.CTkFrame(col3, fg_color="transparent")
+        row.pack(pady=5)
+        ctk.CTkButton(row, text="90°", width=60, command=lambda: self.rotate(90)).pack(side="left", padx=2)
+        ctk.CTkButton(row, text="Flip H", width=60, command=self.flip_h).pack(side="left", padx=2)
+        ctk.CTkButton(row, text="Flip V", width=60, command=self.flip_v).pack(side="left", padx=2)
 
+    # ==========================
+    # LOGIC HIỂN THỊ MỚI
+    # ==========================
     def refresh(self):
-        self.view.show(self.model.current_img)
-        self.view.update_status(self.model)
+        if self.model.current_img is None: return
+        
+        # 1. Chuẩn bị ảnh cho Canvas (Dùng ImageTk chuẩn của Tkinter)
+        rgb = cv2.cvtColor(self.model.current_img, cv2.COLOR_BGR2RGB)
+        pil = Image.fromarray(rgb)
+        
+        # Giữ tham chiếu để ảnh không bị rác (Garbage Collection) xóa mất
+        self.current_tk_image = ImageTk.PhotoImage(pil)
+        
+        # 2. Xóa Canvas cũ và vẽ ảnh mới
+        self.canvas.delete("all")
+        
+        # Vẽ ảnh tại tọa độ (0,0)
+        self.canvas.create_image(0, 0, anchor="nw", image=self.current_tk_image)
+        
+        # 3. Cập nhật vùng cuộn (Scrollregion) theo kích thước ảnh mới
+        self.canvas.config(scrollregion=self.canvas.bbox("all"))
+        
+        # Cập nhật Title
+        h, w = self.model.current_img.shape[:2]
+        self.title(f"Editor - {os.path.basename(self.model.img_path)} ({w}x{h})")
 
     def sync_sliders(self):
-        self.scale_br.set(self.model.brightness)
-        self.scale_ct.set(self.model.contrast)
-        self.scale_bl.set(self.model.blur)
-        self.scale_sz.set(self.model.scale)
+        self.s_br.set(self.model.brightness)
+        self.s_ct.set(self.model.contrast)
+        self.s_bl.set(self.model.blur)
+        self.s_sz.set(self.model.scale)
 
+    def on_resize(self, event):
+        pass
+
+    # Actions Wrapper
     def open_image(self):
-        path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.png *.jpeg *.bmp")])
-        if path:
-            self.model.open_image(path)
+        p = filedialog.askopenfilename(filetypes=[("Images", "*.jpg *.png *.bmp")])
+        if p:
+            self.model.open_image(p)
             self.sync_sliders()
             self.refresh()
-
+    
     def save(self):
         if self.model.current_img is not None:
-            if self.model.img_path:
-                cv2.imwrite(self.model.img_path, self.model.current_img)
-                msg.showinfo("Success", "Image saved!")
-            else: self.save_as()
-
+            cv2.imwrite(self.model.img_path, self.model.current_img)
+            messagebox.showinfo("Saved", "Success!")
+            
     def save_as(self):
         if self.model.current_img is None: return
-        path = filedialog.asksaveasfilename(defaultextension=".jpg")
-        if path:
-            cv2.imwrite(path, self.model.current_img)
-            if not self.model.img_path: self.model.img_path = path
-            self.refresh()
+        p = filedialog.asksaveasfilename(defaultextension=".jpg")
+        if p:
+            cv2.imwrite(p, self.model.current_img)
+            self.model.img_path = p
 
-    def undo(self):
+    def undo(self): 
         if self.model.undo(): self.sync_sliders(); self.refresh()
-
-    def redo(self):
+    
+    def redo(self): 
         if self.model.redo(): self.sync_sliders(); self.refresh()
 
     def grayscale(self): self.model.grayscale(); self.refresh()
@@ -283,24 +326,11 @@ class ImageEditorApp:
     def flip_v(self): self.model.flip_v(); self.refresh()
 
     def on_release(self, e): self.model.push_undo()
-
-    def on_brightness_change(self, e): 
-        self.model.brightness = int(self.scale_br.get())
-        self.model.apply_all(); self.refresh()
-    def on_contrast_change(self, e): 
-        self.model.contrast = float(self.scale_ct.get())
-        self.model.apply_all(); self.refresh()
-    def on_blur_change(self, e): 
-        self.model.blur = int(self.scale_bl.get())
-        self.model.apply_all(); self.refresh()
-    def on_resize_change(self, e): 
-        self.model.scale = float(self.scale_sz.get())
-        self.model.apply_all(); self.refresh()
+    def on_br_change(self, v): self.model.brightness = int(v); self.model.apply_all(); self.refresh()
+    def on_ct_change(self, v): self.model.contrast = float(v); self.model.apply_all(); self.refresh()
+    def on_bl_change(self, v): self.model.blur = int(v); self.model.apply_all(); self.refresh()
+    def on_sz_change(self, v): self.model.scale = float(v); self.model.apply_all(); self.refresh()
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    root.title("Assignment 3")
-    root.geometry("1100x700")
-    root.configure(bg="#333") 
-    ImageEditorApp(root)
-    root.mainloop()
+    app = App()
+    app.mainloop()
