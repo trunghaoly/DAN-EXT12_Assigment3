@@ -14,8 +14,8 @@ class ImageModel:
 
         self.brightness = 0
         self.contrast = 1.0
-        self.zoom = 1.0
-        self.blur = 0  # must be odd or 0
+        self.scale = 1.0      # 🔥 resize thật
+        self.blur = 0
 
         self.undo_stack = []
         self.redo_stack = []
@@ -26,7 +26,7 @@ class ImageModel:
             "base": self.original_img.copy(),
             "brightness": self.brightness,
             "contrast": self.contrast,
-            "zoom": self.zoom,
+            "scale": self.scale,
             "blur": self.blur
         }
 
@@ -35,7 +35,7 @@ class ImageModel:
         self.original_img = s["base"]
         self.brightness = s["brightness"]
         self.contrast = s["contrast"]
-        self.zoom = s["zoom"]
+        self.scale = s["scale"]
         self.blur = s["blur"]
 
     def push_undo(self):
@@ -64,7 +64,7 @@ class ImageModel:
 
         self.brightness = 0
         self.contrast = 1.0
-        self.zoom = 1.0
+        self.scale = 1.0
         self.blur = 0
 
         self.undo_stack.clear()
@@ -76,18 +76,29 @@ class ImageModel:
 
         img = self.original_img.copy()
 
+        # resize thật
+        if self.scale != 1.0:
+            img = cv2.resize(
+                img,
+                None,
+                fx=self.scale,
+                fy=self.scale,
+                interpolation=cv2.INTER_LINEAR
+            )
+
         if self.blur > 0:
             k = self.blur if self.blur % 2 == 1 else self.blur + 1
             img = cv2.GaussianBlur(img, (k, k), 0)
 
         img = cv2.convertScaleAbs(
             img,
-            alpha=float(self.contrast),
-            beta=int(self.brightness)
+            alpha=self.contrast,
+            beta=self.brightness
         )
+
         self.current_img = img
 
-    # ---------- effects ----------
+    # ---------- EFFECTS ----------
     def grayscale(self):
         self.push_undo()
         g = cv2.cvtColor(self.current_img, cv2.COLOR_BGR2GRAY)
@@ -135,15 +146,12 @@ class ImageView:
         )
         self.status.pack(side=tk.BOTTOM, fill=tk.X)
 
-    def show(self, img, zoom):
+    def show(self, img):
         if img is None:
             return
 
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         pil = Image.fromarray(rgb)
-
-        w, h = pil.size
-        pil = pil.resize((int(w * zoom), int(h * zoom)), Image.LANCZOS)
 
         self.canvas_img = ImageTk.PhotoImage(pil)
         self.canvas.delete("all")
@@ -169,7 +177,6 @@ class ImageEditorApp:
         self.build_toolbar()
         self.view = ImageView(root)
 
-    # ---------- MENU ----------
     def build_menu(self):
         menu = tk.Menu(self.root)
         self.root.config(menu=menu)
@@ -187,26 +194,24 @@ class ImageEditorApp:
         edit.add_command(label="Undo", command=self.undo)
         edit.add_command(label="Redo", command=self.redo)
 
-    # ---------- TOOLBAR ----------
     def build_toolbar(self):
         bar = tk.Frame(self.root, bd=1, relief=tk.RAISED)
         bar.pack(side=tk.TOP, fill=tk.X)
 
         effects = tk.LabelFrame(bar, text="Effects")
-        effects.pack(side=tk.LEFT, padx=6, pady=4)
-
+        effects.pack(side=tk.LEFT, padx=6)
         tk.Button(effects, text="Grayscale", command=self.grayscale).pack(side=tk.LEFT, padx=3)
         tk.Button(effects, text="Edge", command=self.edge).pack(side=tk.LEFT, padx=3)
 
         adjust = tk.LabelFrame(bar, text="Adjustments")
-        adjust.pack(side=tk.LEFT, padx=6, pady=4)
+        adjust.pack(side=tk.LEFT, padx=6)
 
         self.brightness = tk.Scale(
             adjust, from_=-100, to=100,
             orient=tk.HORIZONTAL, label="Brightness",
             length=140, command=self.on_brightness
         )
-        self.brightness.pack(side=tk.LEFT, padx=4)
+        self.brightness.pack(side=tk.LEFT)
 
         self.contrast = tk.Scale(
             adjust, from_=0.5, to=2.0,
@@ -215,26 +220,26 @@ class ImageEditorApp:
             command=self.on_contrast
         )
         self.contrast.set(1.0)
-        self.contrast.pack(side=tk.LEFT, padx=4)
+        self.contrast.pack(side=tk.LEFT)
 
         self.blur = tk.Scale(
             adjust, from_=0, to=25,
             orient=tk.HORIZONTAL, label="Blur",
             length=140, command=self.on_blur
         )
-        self.blur.pack(side=tk.LEFT, padx=4)
+        self.blur.pack(side=tk.LEFT)
 
-        self.zoom = tk.Scale(
+        self.scale = tk.Scale(
             adjust, from_=0.2, to=3.0,
-            resolution=0.05, orient=tk.HORIZONTAL,
-            label="Zoom", length=140,
-            command=self.on_zoom
+            resolution=0.1, orient=tk.HORIZONTAL,
+            label="Resize", length=140,
+            command=self.on_resize
         )
-        self.zoom.set(1.0)
-        self.zoom.pack(side=tk.LEFT, padx=4)
+        self.scale.set(1.0)
+        self.scale.pack(side=tk.LEFT)
 
         transform = tk.LabelFrame(bar, text="Transform")
-        transform.pack(side=tk.LEFT, padx=6, pady=4)
+        transform.pack(side=tk.LEFT, padx=6)
 
         tk.Button(transform, text="90°", command=lambda: self.rotate(90)).pack(side=tk.LEFT, padx=3)
         tk.Button(transform, text="180°", command=lambda: self.rotate(180)).pack(side=tk.LEFT, padx=3)
@@ -242,9 +247,8 @@ class ImageEditorApp:
         tk.Button(transform, text="Flip H", command=self.flip_h).pack(side=tk.LEFT, padx=3)
         tk.Button(transform, text="Flip V", command=self.flip_v).pack(side=tk.LEFT, padx=3)
 
-    # ---------- CORE ----------
     def refresh(self):
-        self.view.show(self.model.current_img, self.model.zoom)
+        self.view.show(self.model.current_img)
         self.view.update_status(self.model)
 
     def open_image(self):
@@ -255,7 +259,7 @@ class ImageEditorApp:
             self.model.open_image(path)
             self.brightness.set(0)
             self.contrast.set(1.0)
-            self.zoom.set(1.0)
+            self.scale.set(1.0)
             self.blur.set(0)
             self.refresh()
 
@@ -284,7 +288,7 @@ class ImageEditorApp:
     def sync(self):
         self.brightness.set(self.model.brightness)
         self.contrast.set(self.model.contrast)
-        self.zoom.set(self.model.zoom)
+        self.scale.set(self.model.scale)
         self.blur.set(self.model.blur)
 
     # ---------- ACTIONS ----------
@@ -324,8 +328,10 @@ class ImageEditorApp:
         self.model.apply_all()
         self.refresh()
 
-    def on_zoom(self, v):
-        self.model.zoom = float(v)
+    def on_resize(self, v):
+        self.model.push_undo()
+        self.model.scale = float(v)
+        self.model.apply_all()
         self.refresh()
 
 
