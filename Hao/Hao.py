@@ -5,9 +5,6 @@ import cv2
 import os
 from PIL import Image, ImageTk, ImageDraw
 
-# ==========================================
-# 1. MODEL (LOGIC XỬ LÝ ẢNH - GIỮ NGUYÊN)
-# ==========================================
 class ImageModel:
     def __init__(self):
         self.original_img = None
@@ -56,8 +53,12 @@ class ImageModel:
         return True
 
     def open_image(self, path):
+        img = cv2.imread(path)
+        if img is None:
+            raise ValueError("Cannot read image file")
+        
         self.img_path = path
-        self.original_img = cv2.imread(path)
+        self.original_img = img
         self.brightness = 0
         self.contrast = 1.0
         self.scale = 1.0
@@ -110,10 +111,40 @@ class ImageModel:
         self.original_img = cv2.flip(self.original_img, 0)
         self.apply_all()
 
+class ScrollableImageCanvas(ctk.CTkFrame):
+    def __init__(self, master, **kwargs):
+        super().__init__(master, **kwargs)
+        
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
 
-# ==========================================
-# 2. VIEW & CONTROLLER
-# ==========================================
+        self.canvas = tk.Canvas(self, bg="#1a1a1a", highlightthickness=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+
+        self.v_scroll = ctk.CTkScrollbar(self, orientation="vertical", command=self.canvas.yview)
+        self.v_scroll.grid(row=0, column=1, sticky="ns")
+        
+        self.h_scroll = ctk.CTkScrollbar(self, orientation="horizontal", command=self.canvas.xview)
+        self.h_scroll.grid(row=1, column=0, sticky="ew")
+
+        self.canvas.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
+        
+        self.current_tk_image = None
+
+    def update_image(self, cv_img):
+        if cv_img is None:
+            self.canvas.delete("all")
+            return
+
+        rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+        pil = Image.fromarray(rgb)
+        
+        self.current_tk_image = ImageTk.PhotoImage(pil)
+        
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, anchor="nw", image=self.current_tk_image)
+        self.canvas.config(scrollregion=self.canvas.bbox("all"))
+
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
@@ -121,28 +152,21 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        # --- SỬA TITLE TẠI ĐÂY ---
         self.title("Assignment 3")
         self.geometry("1100x750")
         
-        self.model = ImageModel()
-        self.current_tk_image = None 
+        self.protocol("WM_DELETE_WINDOW", self.confirm_exit)
 
+        self.model = ImageModel()
         self.menu_icons = {}
         self.load_menu_icons()
 
-        # 1. Menu Bar
         self.build_native_menu()
-
-        # --- THÊM STATUS BAR (Thanh trạng thái dưới cùng) ---
-        # Lưu ý: Pack trước các thành phần khác với side="bottom" để nó nằm dưới cùng
         self.build_status_bar()
-
-        # 3. Control Panel (Nằm trên status bar)
         self.build_controls()
-
-        # 2. Vùng ảnh (Chiếm phần còn lại)
-        self.build_scrollable_image_area()
+        
+        self.image_area = ScrollableImageCanvas(self, fg_color="#1a1a1a", corner_radius=0)
+        self.image_area.pack(side="top", fill="both", expand=True)
 
         self.bind("<Configure>", self.on_resize)
 
@@ -178,27 +202,22 @@ class App(ctk.CTk):
         file_menu.add_command(label=" Save", image=self.menu_icons["save"], compound="left", command=self.save)
         file_menu.add_command(label=" Save As", image=self.menu_icons["save_as"], compound="left", command=self.save_as)
         file_menu.add_separator()
-        file_menu.add_command(label=" Exit", image=self.menu_icons["close"], compound="left", command=self.quit)
+        file_menu.add_command(label=" Exit", image=self.menu_icons["close"], compound="left", command=self.confirm_exit)
 
         edit_menu = tk.Menu(menubar, **menu_theme)
         menubar.add_cascade(label="Edit", menu=edit_menu)
         edit_menu.add_command(label=" Undo", image=self.menu_icons["undo"], compound="left", command=self.undo)
         edit_menu.add_command(label=" Redo", image=self.menu_icons["redo"], compound="left", command=self.redo)
 
-    # --- STATUS BAR MỚI ---
     def build_status_bar(self):
-        # Frame nhỏ dưới cùng
         self.status_frame = ctk.CTkFrame(self, height=25, corner_radius=0, fg_color="#222222")
         self.status_frame.pack(side="bottom", fill="x")
-        
-        # Label hiển thị thông tin
         self.status_label = ctk.CTkLabel(self.status_frame, text="Ready", text_color="gray", font=("Arial", 11), anchor="w")
         self.status_label.pack(side="left", padx=10, pady=2)
 
     def build_controls(self):
-        # Thanh công cụ (Nằm trên status bar)
         control_frame = ctk.CTkFrame(self, fg_color=("#E0E0E0", "#2B2B2B"), height=160, corner_radius=15)
-        control_frame.pack(side="bottom", fill="x", padx=20, pady=10) # pady 10 để cách status bar 1 chút
+        control_frame.pack(side="bottom", fill="x", padx=20, pady=10) 
 
         col1 = ctk.CTkFrame(control_frame, fg_color="transparent")
         col1.pack(side="left", fill="y", padx=20, pady=20)
@@ -235,39 +254,11 @@ class App(ctk.CTk):
         ctk.CTkButton(row, text="Flip H", width=60, command=self.flip_h).pack(side="left", padx=2)
         ctk.CTkButton(row, text="Flip V", width=60, command=self.flip_v).pack(side="left", padx=2)
 
-    def build_scrollable_image_area(self):
-        self.img_container = ctk.CTkFrame(self, fg_color="#1a1a1a", corner_radius=0)
-        self.img_container.pack(side="top", fill="both", expand=True)
-
-        self.img_container.grid_rowconfigure(0, weight=1)
-        self.img_container.grid_columnconfigure(0, weight=1)
-
-        self.canvas = tk.Canvas(self.img_container, bg="#1a1a1a", highlightthickness=0)
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-
-        self.v_scroll = ctk.CTkScrollbar(self.img_container, orientation="vertical", command=self.canvas.yview)
-        self.v_scroll.grid(row=0, column=1, sticky="ns")
-        self.h_scroll = ctk.CTkScrollbar(self.img_container, orientation="horizontal", command=self.canvas.xview)
-        self.h_scroll.grid(row=1, column=0, sticky="ew")
-
-        self.canvas.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
-
     def refresh(self):
         if self.model.current_img is None: return
-        
-        rgb = cv2.cvtColor(self.model.current_img, cv2.COLOR_BGR2RGB)
-        pil = Image.fromarray(rgb)
-        
-        self.current_tk_image = ImageTk.PhotoImage(pil)
-        
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor="nw", image=self.current_tk_image)
-        self.canvas.config(scrollregion=self.canvas.bbox("all"))
-        
-        # --- CẬP NHẬT THÔNG TIN VÀO STATUS BAR ---
+        self.image_area.update_image(self.model.current_img)
         h, w = self.model.current_img.shape[:2]
         file_name = os.path.basename(self.model.img_path) if self.model.img_path else "Untitled"
-        # Cập nhật text ở dưới đáy
         self.status_label.configure(text=f"File: {file_name}  |  Resolution: {w} x {h} px  |  Zoom: {self.model.scale:.1f}x")
 
     def sync_sliders(self):
@@ -278,25 +269,51 @@ class App(ctk.CTk):
 
     def on_resize(self, event):
         pass
+    
+    def confirm_exit(self):
+        if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit the application?"):
+            self.quit()
 
     def open_image(self):
         p = filedialog.askopenfilename(filetypes=[("Images", "*.jpg *.png *.bmp")])
         if p:
-            self.model.open_image(p)
-            self.sync_sliders()
-            self.refresh()
+            try:
+                self.model.open_image(p)
+                self.sync_sliders()
+                self.refresh()
+            except ValueError:
+                messagebox.showerror("Error", "Could not load image. The file might be corrupted or unsupported.")
+            except Exception as e:
+                messagebox.showerror("Error", f"An unexpected error occurred: {e}")
     
     def save(self):
-        if self.model.current_img is not None:
-            cv2.imwrite(self.model.img_path, self.model.current_img)
-            messagebox.showinfo("Saved", "Success!")
+        if self.model.current_img is None:
+            messagebox.showwarning("Warning", "No image loaded to save!")
+            return
+
+        if self.model.img_path:
+            try:
+                cv2.imwrite(self.model.img_path, self.model.current_img)
+                messagebox.showinfo("Success", "Image saved successfully!")
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not save image: {e}")
+        else:
+            self.save_as()
             
     def save_as(self):
-        if self.model.current_img is None: return
-        p = filedialog.asksaveasfilename(defaultextension=".jpg")
+        if self.model.current_img is None:
+            messagebox.showwarning("Warning", "No image loaded to save!")
+            return
+            
+        p = filedialog.asksaveasfilename(defaultextension=".jpg", filetypes=[("JPEG", "*.jpg"), ("PNG", "*.png"), ("BMP", "*.bmp")])
         if p:
-            cv2.imwrite(p, self.model.current_img)
-            self.model.img_path = p
+            try:
+                cv2.imwrite(p, self.model.current_img)
+                self.model.img_path = p
+                self.refresh()
+                messagebox.showinfo("Success", "Image saved successfully!")
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not save image: {e}")
 
     def undo(self): 
         if self.model.undo(): self.sync_sliders(); self.refresh()
