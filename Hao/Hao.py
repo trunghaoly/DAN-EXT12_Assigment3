@@ -70,21 +70,17 @@ class ImageModel:
         if self.original_img is None: return
         img = self.original_img.copy()
 
-        # Resize (chỉ để hiển thị/save final)
         if self.scale != 1.0:
             img = cv2.resize(img, None, fx=self.scale, fy=self.scale, interpolation=cv2.INTER_LINEAR)
 
-        # Blur
         if self.blur > 0:
             k = int(self.blur)
             k = k if k % 2 == 1 else k + 1
             img = cv2.GaussianBlur(img, (k, k), 0)
 
-        # Brightness & Contrast
         img = cv2.convertScaleAbs(img, alpha=self.contrast, beta=self.brightness)
         self.current_img = img
 
-    # --- Destructive Actions ---
     def grayscale(self):
         self.push_undo()
         g = cv2.cvtColor(self.original_img, cv2.COLOR_BGR2GRAY)
@@ -116,7 +112,7 @@ class ImageModel:
 
 
 # ==========================================
-# 2. VIEW & CONTROLLER (SCROLLABLE CANVAS)
+# 2. VIEW & CONTROLLER
 # ==========================================
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -125,32 +121,32 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        # Cấu hình cửa sổ
-        self.title("Assignment 3 - Scrollable Editor")
+        # --- SỬA TITLE TẠI ĐÂY ---
+        self.title("Assignment 3")
         self.geometry("1100x750")
         
-        # Model
         self.model = ImageModel()
-        self.current_tk_image = None # Biến giữ tham chiếu ảnh để không bị mất
+        self.current_tk_image = None 
 
-        # Load Icon 
         self.menu_icons = {}
         self.load_menu_icons()
 
-        # 1. MENU BAR
+        # 1. Menu Bar
         self.build_native_menu()
 
-        # 2. VÙNG ẢNH (CANVAS CÓ SCROLLBAR)
-        self.build_scrollable_image_area()
+        # --- THÊM STATUS BAR (Thanh trạng thái dưới cùng) ---
+        # Lưu ý: Pack trước các thành phần khác với side="bottom" để nó nằm dưới cùng
+        self.build_status_bar()
 
-        # 3. CONTROL PANEL
+        # 3. Control Panel (Nằm trên status bar)
         self.build_controls()
 
-        # Resize event
+        # 2. Vùng ảnh (Chiếm phần còn lại)
+        self.build_scrollable_image_area()
+
         self.bind("<Configure>", self.on_resize)
 
     def load_menu_icons(self):
-        """Load icon, resize và ÉP SANG MÀU TRẮNG"""
         icon_names = ["open", "save", "save_as", "undo", "redo", "close"]
         base_dir = os.path.dirname(os.path.abspath(__file__))
         icon_path = os.path.join(base_dir, "icons") 
@@ -189,45 +185,27 @@ class App(ctk.CTk):
         edit_menu.add_command(label=" Undo", image=self.menu_icons["undo"], compound="left", command=self.undo)
         edit_menu.add_command(label=" Redo", image=self.menu_icons["redo"], compound="left", command=self.redo)
 
-    # --- KHU VỰC QUAN TRỌNG: ẢNH CÓ THANH CUỘN ---
-    def build_scrollable_image_area(self):
-        # 1. Tạo Frame chứa (Container)
-        self.img_container = ctk.CTkFrame(self, fg_color="#1a1a1a", corner_radius=0)
-        self.img_container.pack(side="top", fill="both", expand=True)
-
-        # Dùng Grid layout để đặt Canvas và Scrollbar cạnh nhau
-        self.img_container.grid_rowconfigure(0, weight=1)
-        self.img_container.grid_columnconfigure(0, weight=1)
-
-        # 2. Tạo Canvas (Nơi vẽ ảnh)
-        # bg="#1a1a1a" để trùng màu nền tối
-        self.canvas = tk.Canvas(self.img_container, bg="#1a1a1a", highlightthickness=0)
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-
-        # 3. Tạo Scrollbar Dọc (Vertical)
-        self.v_scroll = ctk.CTkScrollbar(self.img_container, orientation="vertical", command=self.canvas.yview)
-        self.v_scroll.grid(row=0, column=1, sticky="ns")
-
-        # 4. Tạo Scrollbar Ngang (Horizontal)
-        self.h_scroll = ctk.CTkScrollbar(self.img_container, orientation="horizontal", command=self.canvas.xview)
-        self.h_scroll.grid(row=1, column=0, sticky="ew")
-
-        # 5. Kết nối Canvas với Scrollbar
-        self.canvas.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
+    # --- STATUS BAR MỚI ---
+    def build_status_bar(self):
+        # Frame nhỏ dưới cùng
+        self.status_frame = ctk.CTkFrame(self, height=25, corner_radius=0, fg_color="#222222")
+        self.status_frame.pack(side="bottom", fill="x")
+        
+        # Label hiển thị thông tin
+        self.status_label = ctk.CTkLabel(self.status_frame, text="Ready", text_color="gray", font=("Arial", 11), anchor="w")
+        self.status_label.pack(side="left", padx=10, pady=2)
 
     def build_controls(self):
-        # Thanh công cụ luôn nằm dưới cùng (side="bottom")
+        # Thanh công cụ (Nằm trên status bar)
         control_frame = ctk.CTkFrame(self, fg_color=("#E0E0E0", "#2B2B2B"), height=160, corner_radius=15)
-        control_frame.pack(side="bottom", fill="x", padx=20, pady=20)
+        control_frame.pack(side="bottom", fill="x", padx=20, pady=10) # pady 10 để cách status bar 1 chút
 
-        # Cột 1: Effects
         col1 = ctk.CTkFrame(control_frame, fg_color="transparent")
         col1.pack(side="left", fill="y", padx=20, pady=20)
         ctk.CTkLabel(col1, text="EFFECTS", font=("Arial", 12, "bold")).pack(anchor="w", pady=(0,5))
         ctk.CTkButton(col1, text="Grayscale", width=100, command=self.grayscale).pack(pady=5)
         ctk.CTkButton(col1, text="Edge Detect", width=100, command=self.edge).pack(pady=5)
 
-        # Cột 2: Sliders
         col2 = ctk.CTkFrame(control_frame, fg_color="transparent")
         col2.pack(side="left", fill="x", expand=True, padx=20, pady=10)
         ctk.CTkLabel(col2, text="ADJUSTMENTS", font=("Arial", 12, "bold")).pack(anchor="w", pady=(0,5))
@@ -248,7 +226,6 @@ class App(ctk.CTk):
         self.s_bl = make_slider(col2, "Blur", 0, 20, 0, self.on_bl_change, self.on_release)
         self.s_sz = make_slider(col2, "Resize", 0.1, 3.0, 1.0, self.on_sz_change, self.on_release)
 
-        # Cột 3: Transform
         col3 = ctk.CTkFrame(control_frame, fg_color="transparent")
         col3.pack(side="right", fill="y", padx=20, pady=20)
         ctk.CTkLabel(col3, text="TRANSFORM", font=("Arial", 12, "bold")).pack(anchor="w", pady=(0,5))
@@ -258,31 +235,40 @@ class App(ctk.CTk):
         ctk.CTkButton(row, text="Flip H", width=60, command=self.flip_h).pack(side="left", padx=2)
         ctk.CTkButton(row, text="Flip V", width=60, command=self.flip_v).pack(side="left", padx=2)
 
-    # ==========================
-    # LOGIC HIỂN THỊ MỚI
-    # ==========================
+    def build_scrollable_image_area(self):
+        self.img_container = ctk.CTkFrame(self, fg_color="#1a1a1a", corner_radius=0)
+        self.img_container.pack(side="top", fill="both", expand=True)
+
+        self.img_container.grid_rowconfigure(0, weight=1)
+        self.img_container.grid_columnconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(self.img_container, bg="#1a1a1a", highlightthickness=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+
+        self.v_scroll = ctk.CTkScrollbar(self.img_container, orientation="vertical", command=self.canvas.yview)
+        self.v_scroll.grid(row=0, column=1, sticky="ns")
+        self.h_scroll = ctk.CTkScrollbar(self.img_container, orientation="horizontal", command=self.canvas.xview)
+        self.h_scroll.grid(row=1, column=0, sticky="ew")
+
+        self.canvas.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
+
     def refresh(self):
         if self.model.current_img is None: return
         
-        # 1. Chuẩn bị ảnh cho Canvas (Dùng ImageTk chuẩn của Tkinter)
         rgb = cv2.cvtColor(self.model.current_img, cv2.COLOR_BGR2RGB)
         pil = Image.fromarray(rgb)
         
-        # Giữ tham chiếu để ảnh không bị rác (Garbage Collection) xóa mất
         self.current_tk_image = ImageTk.PhotoImage(pil)
         
-        # 2. Xóa Canvas cũ và vẽ ảnh mới
         self.canvas.delete("all")
-        
-        # Vẽ ảnh tại tọa độ (0,0)
         self.canvas.create_image(0, 0, anchor="nw", image=self.current_tk_image)
-        
-        # 3. Cập nhật vùng cuộn (Scrollregion) theo kích thước ảnh mới
         self.canvas.config(scrollregion=self.canvas.bbox("all"))
         
-        # Cập nhật Title
+        # --- CẬP NHẬT THÔNG TIN VÀO STATUS BAR ---
         h, w = self.model.current_img.shape[:2]
-        self.title(f"Editor - {os.path.basename(self.model.img_path)} ({w}x{h})")
+        file_name = os.path.basename(self.model.img_path) if self.model.img_path else "Untitled"
+        # Cập nhật text ở dưới đáy
+        self.status_label.configure(text=f"File: {file_name}  |  Resolution: {w} x {h} px  |  Zoom: {self.model.scale:.1f}x")
 
     def sync_sliders(self):
         self.s_br.set(self.model.brightness)
@@ -293,7 +279,6 @@ class App(ctk.CTk):
     def on_resize(self, event):
         pass
 
-    # Actions Wrapper
     def open_image(self):
         p = filedialog.askopenfilename(filetypes=[("Images", "*.jpg *.png *.bmp")])
         if p:
