@@ -16,6 +16,7 @@ class ImageModel:
         self.blur = 0
         self.undo_stack = []
         self.redo_stack = []
+        self.is_modified = False
 
     def snapshot(self):
         return {
@@ -66,6 +67,7 @@ class ImageModel:
         self.undo_stack.clear()
         self.redo_stack.clear()
         self.apply_all()
+        self.is_modified = False
 
     def apply_all(self):
         if self.original_img is None: return
@@ -81,6 +83,7 @@ class ImageModel:
 
         img = cv2.convertScaleAbs(img, alpha=self.contrast, beta=self.brightness)
         self.current_img = img
+        self.is_modified = True
 
     def grayscale(self):
         self.push_undo()
@@ -128,7 +131,6 @@ class ScrollableImageCanvas(ctk.CTkFrame):
         self.h_scroll.grid(row=1, column=0, sticky="ew")
 
         self.canvas.configure(yscrollcommand=self.v_scroll.set, xscrollcommand=self.h_scroll.set)
-        
         self.current_tk_image = None
 
     def update_image(self, cv_img):
@@ -154,12 +156,12 @@ class App(ctk.CTk):
 
         self.title("Assignment 3")
         self.geometry("1100x750")
-        
         self.protocol("WM_DELETE_WINDOW", self.confirm_exit)
 
         self.model = ImageModel()
         self.menu_icons = {}
         self.load_menu_icons()
+        self.slider_labels = {} 
 
         self.build_native_menu()
         self.build_status_bar()
@@ -229,21 +231,48 @@ class App(ctk.CTk):
         col2.pack(side="left", fill="x", expand=True, padx=20, pady=10)
         ctk.CTkLabel(col2, text="ADJUSTMENTS", font=("Arial", 12, "bold")).pack(anchor="w", pady=(0,5))
 
-        def make_slider(parent, txt, f, t, init, cmd_drag, cmd_rel):
+        def make_slider(parent, name, f, t, default_val, cmd_drag, cmd_rel, show_reset=True):
             sub = ctk.CTkFrame(parent, fg_color="transparent")
             sub.pack(fill="x", pady=2)
-            ctk.CTkLabel(sub, text=txt, width=70, anchor="w").pack(side="left")
-            s = ctk.CTkSlider(sub, from_=f, to=t, height=18)
-            s.set(init)
-            s.pack(side="left", fill="x", expand=True, padx=5)
-            s.configure(command=cmd_drag)
-            s.bind("<ButtonRelease-1>", cmd_rel)
-            return s
+            
+            lbl_text = f"{name}: {default_val}"
+            lbl = ctk.CTkLabel(sub, text=lbl_text, width=110, anchor="w", font=("Arial", 11))
+            lbl.pack(side="left")
+            self.slider_labels[name] = lbl
 
-        self.s_br = make_slider(col2, "Bright", -100, 100, 0, self.on_br_change, self.on_release)
-        self.s_ct = make_slider(col2, "Contrast", 0.5, 2.0, 1.0, self.on_ct_change, self.on_release)
-        self.s_bl = make_slider(col2, "Blur", 0, 20, 0, self.on_bl_change, self.on_release)
-        self.s_sz = make_slider(col2, "Resize", 0.1, 3.0, 1.0, self.on_sz_change, self.on_release)
+            def on_drag_wrapper(val):
+                if name == "Blur" or name == "Brightness": display_val = int(val)
+                else: display_val = f"{val:.2f}"
+                
+                self.slider_labels[name].configure(text=f"{name}: {display_val}")
+                cmd_drag(val)
+
+            def reset_action():
+                slider.set(default_val)
+                on_drag_wrapper(default_val) 
+                cmd_rel(None)
+
+            if show_reset:
+                btn_reset = ctk.CTkButton(sub, text="⟲", width=25, height=20, 
+                                          fg_color="transparent", border_width=1, border_color="gray",
+                                          text_color=("black", "white"), font=("Arial", 10, "bold"),
+                                          command=reset_action)
+                btn_reset.pack(side="left", padx=(0, 5))
+            else:
+                ctk.CTkFrame(sub, width=25, height=20, fg_color="transparent").pack(side="left", padx=(0, 5))
+
+            slider = ctk.CTkSlider(sub, from_=f, to=t, height=18)
+            slider.set(default_val)
+            slider.pack(side="left", fill="x", expand=True, padx=5)
+            
+            slider.configure(command=on_drag_wrapper)
+            slider.bind("<ButtonRelease-1>", cmd_rel)
+            return slider
+
+        self.s_br = make_slider(col2, "Brightness", -100, 100, 0, self.on_br_change, self.on_release, show_reset=True)
+        self.s_ct = make_slider(col2, "Contrast", 0.5, 2.0, 1.0, self.on_ct_change, self.on_release, show_reset=True)
+        self.s_bl = make_slider(col2, "Blur", 0, 20, 0, self.on_bl_change, self.on_release, show_reset=True)
+        self.s_sz = make_slider(col2, "Resize", 0.1, 3.0, 1.0, self.on_sz_change, self.on_release, show_reset=True)
 
         col3 = ctk.CTkFrame(control_frame, fg_color="transparent")
         col3.pack(side="right", fill="y", padx=20, pady=20)
@@ -258,23 +287,46 @@ class App(ctk.CTk):
         if self.model.current_img is None: return
         self.image_area.update_image(self.model.current_img)
         h, w = self.model.current_img.shape[:2]
+        
+        mod_mark = "*" if self.model.is_modified else ""
         file_name = os.path.basename(self.model.img_path) if self.model.img_path else "Untitled"
-        self.status_label.configure(text=f"File: {file_name}  |  Resolution: {w} x {h} px  |  Zoom: {self.model.scale:.1f}x")
+        
+        self.status_label.configure(text=f"File: {file_name}{mod_mark}  |  Resolution: {w} x {h} px  |  Zoom: {self.model.scale:.1f}x")
+        self.title(f"Assignment 3 - {file_name}{mod_mark}")
 
     def sync_sliders(self):
         self.s_br.set(self.model.brightness)
         self.s_ct.set(self.model.contrast)
         self.s_bl.set(self.model.blur)
         self.s_sz.set(self.model.scale)
+        
+        self.slider_labels["Brightness"].configure(text=f"Brightness: {self.model.brightness}")
+        self.slider_labels["Contrast"].configure(text=f"Contrast: {self.model.contrast:.2f}")
+        self.slider_labels["Blur"].configure(text=f"Blur: {self.model.blur}")
+        self.slider_labels["Resize"].configure(text=f"Resize: {self.model.scale:.2f}")
 
     def on_resize(self, event):
         pass
     
     def confirm_exit(self):
-        if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit the application?"):
-            self.quit()
+        if self.model.is_modified and self.model.current_img is not None:
+            answer = messagebox.askyesnocancel("Unsaved Changes", "You have unsaved changes. Do you want to save before exiting?")
+            if answer is True:
+                if self.save(): self.quit()
+            elif answer is False:
+                self.quit()
+        else:
+            if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit?"):
+                self.quit()
 
     def open_image(self):
+        if self.model.is_modified and self.model.current_img is not None:
+             answer = messagebox.askyesnocancel("Unsaved Changes", "You have unsaved changes. Save before opening new image?")
+             if answer is True:
+                 if not self.save(): return 
+             elif answer is None:
+                 return
+
         p = filedialog.askopenfilename(filetypes=[("Images", "*.jpg *.png *.bmp")])
         if p:
             try:
@@ -289,31 +341,39 @@ class App(ctk.CTk):
     def save(self):
         if self.model.current_img is None:
             messagebox.showwarning("Warning", "No image loaded to save!")
-            return
+            return False
 
         if self.model.img_path:
             try:
                 cv2.imwrite(self.model.img_path, self.model.current_img)
+                self.model.is_modified = False
+                self.refresh()
                 messagebox.showinfo("Success", "Image saved successfully!")
+                return True
             except Exception as e:
                 messagebox.showerror("Error", f"Could not save image: {e}")
+                return False
         else:
-            self.save_as()
+            return self.save_as()
             
     def save_as(self):
         if self.model.current_img is None:
             messagebox.showwarning("Warning", "No image loaded to save!")
-            return
+            return False
             
         p = filedialog.asksaveasfilename(defaultextension=".jpg", filetypes=[("JPEG", "*.jpg"), ("PNG", "*.png"), ("BMP", "*.bmp")])
         if p:
             try:
                 cv2.imwrite(p, self.model.current_img)
                 self.model.img_path = p
+                self.model.is_modified = False
                 self.refresh()
                 messagebox.showinfo("Success", "Image saved successfully!")
+                return True
             except Exception as e:
                 messagebox.showerror("Error", f"Could not save image: {e}")
+                return False
+        return False
 
     def undo(self): 
         if self.model.undo(): self.sync_sliders(); self.refresh()
