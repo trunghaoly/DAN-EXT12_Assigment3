@@ -10,8 +10,8 @@ from tkinter import filedialog, messagebox
 import cv2
 import os
 from PIL import Image, ImageTk, ImageDraw
-from image_model import ImageModel
-from scrollable_canvas import ScrollableImageCanvas
+from 1_image_model import ImageModel
+from 2_scrollable_canvas import ScrollableImageCanvas
 
 
 # Set application theme
