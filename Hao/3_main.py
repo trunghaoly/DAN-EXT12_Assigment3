@@ -4,14 +4,26 @@ Main application class for image editor GUI.
 Provides a complete graphical interface for image processing with controls
 for effects, adjustments, transformations, and file operations.
 """
+import sys
+import os
+from pathlib import Path
+
+# Add current directory to Python path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import cv2
-import os
 from PIL import Image, ImageTk, ImageDraw
-from 1_image_model import ImageModel
-from 2_scrollable_canvas import ScrollableImageCanvas
+import importlib
+
+# Import modules dynamically
+image_model_module = importlib.import_module("1_image_model")
+scrollable_canvas_module = importlib.import_module("2_scrollable_canvas")
+
+ImageModel = image_model_module.ImageModel
+ScrollableImageCanvas = scrollable_canvas_module.ScrollableImageCanvas
 
 
 # Set application theme
