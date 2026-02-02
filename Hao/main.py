@@ -18,9 +18,9 @@ import cv2
 from PIL import Image, ImageTk, ImageDraw
 import importlib
 
-# Import modules dynamically
-image_model_module = importlib.import_module("1_image_model")
-scrollable_canvas_module = importlib.import_module("2_scrollable_canvas")
+# Import modules dynamically (updated names)
+image_model_module = importlib.import_module("image_model")
+scrollable_canvas_module = importlib.import_module("scrollable_canvas")
 
 ImageModel = image_model_module.ImageModel
 ScrollableImageCanvas = scrollable_canvas_module.ScrollableImageCanvas
