@@ -19,11 +19,11 @@ from PIL import Image, ImageTk, ImageDraw
 import importlib
 
 # Import modules dynamically (updated names)
-image_model_module = importlib.import_module("image_model")
-scrollable_canvas_module = importlib.import_module("scrollable_canvas")
+image_processing_module = importlib.import_module("image_processing")
+image_display_module = importlib.import_module("image_display")
 
-ImageModel = image_model_module.ImageModel
-ScrollableImageCanvas = scrollable_canvas_module.ScrollableImageCanvas
+ImageModel = image_processing_module.ImageModel
+ScrollableImageCanvas = image_display_module.ScrollableImageCanvas
 
 
 # Set application theme
