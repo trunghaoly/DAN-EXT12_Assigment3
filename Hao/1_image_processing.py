@@ -19,6 +19,7 @@ class ImageModel:
         """Initialize image model with default state."""
         # Image data
         self.original_img = None
+        self.color_img = None
         self.current_img = None
         self.img_path = ""
         
@@ -32,18 +33,21 @@ class ImageModel:
         self.undo_stack = []
         self.redo_stack = []
         
-        # State flag
+        # State flags
         self.is_modified = False
+        self.is_grayscale = False
 
     def snapshot(self):
         """Create a snapshot of current state for undo/redo."""
         # Copy image and parameters
         return {
             "base": self.original_img.copy() if self.original_img is not None else None,
+            "color": self.color_img.copy() if self.color_img is not None else None,
             "brightness": self.brightness,
             "contrast": self.contrast,
             "scale": self.scale,
-            "blur": self.blur
+            "blur": self.blur,
+            "is_grayscale": self.is_grayscale
         }
 
     def restore(self, s):
@@ -54,10 +58,12 @@ class ImageModel:
         
         # Restore all parameters
         self.original_img = s["base"]
+        self.color_img = s.get("color")
         self.brightness = s["brightness"]
         self.contrast = s["contrast"]
         self.scale = s["scale"]
         self.blur = s["blur"]
+        self.is_grayscale = s.get("is_grayscale", False)
         
         # Reapply transformations
         self.apply_all()
@@ -110,11 +116,15 @@ class ImageModel:
         # Set original image
         self.original_img = img
         
+        # Store color version for toggle
+        self.color_img = img.copy()
+        
         # Reset all parameters to defaults
         self.brightness = 0
         self.contrast = 1.0
         self.scale = 1.0
         self.blur = 0
+        self.is_grayscale = False
         
         # Clear undo/redo history
         self.undo_stack.clear()
@@ -156,13 +166,19 @@ class ImageModel:
         self.is_modified = True
 
     def grayscale(self):
-        """Convert image to grayscale."""
+        """Convert image to grayscale (apply only once)."""
         # Save state to undo stack
         self.push_undo()
         
-        # Convert to grayscale then back to BGR (3 channels)
-        g = cv2.cvtColor(self.original_img, cv2.COLOR_BGR2GRAY)
-        self.original_img = cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
+        if self.is_grayscale:
+            # Toggle back to color
+            self.original_img = self.color_img.copy()
+            self.is_grayscale = False
+        else:
+            # Convert to grayscale then back to BGR (3 channels)
+            g = cv2.cvtColor(self.original_img, cv2.COLOR_BGR2GRAY)
+            self.original_img = cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
+            self.is_grayscale = True
         
         # Reapply transformations
         self.apply_all()
